@@ -755,15 +755,6 @@ class ModelBase:
                 quant_algo = quant_config.get("quant_algo", quant_algo)
                 quant_layers = quant_config.get("quantized_layers", quant_layers) or {}
 
-        # hf_quant_config.json (ModelOpt schema) carries quant_algo but not
-        # quant_method. If the producer is ModelOpt and .weight_scale tensors
-        # are present (e.g. lm_head FP8 in mixed NVFP4 models), route them
-        # through the existing "modelopt" branch of dequant_model.
-        if quant_method is None and producer_name == "modelopt" \
-                and any(k.endswith(".weight_scale") for k in self.model_tensors):
-            self.hparams.setdefault("quantization_config", {})["quant_method"] = "modelopt"
-            quant_method = "modelopt"
-
         # Some models use per-tensor quant_algo (e.g. "MIXED_PRECISION" with
         # per-layer NVFP4/FP8) instead of a single global "NVFP4" value.
         if quant_algo != "NVFP4":
