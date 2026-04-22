@@ -743,12 +743,28 @@ class ModelBase:
         quant_method = (self.hparams.get("quantization_config") or {}).get("quant_method")
         quant_layers = (self.hparams.get("quantization_config") or {}).get("quantized_layers") or {}
         quant_config_file = self.dir_model / "hf_quant_config.json"
+        producer_name = None
 
         if (not quant_algo or not quant_layers) and quant_config_file.is_file():
             with open(quant_config_file, "r", encoding="utf-8") as f:
-                quant_config = json.load(f).get("quantization") or {}
+                hf_quant_config = json.load(f)
+                quant_config = hf_quant_config.get("quantization") or {}
+                producer = hf_quant_config.get("producer")
+                if isinstance(producer, dict):
+                    name = producer.get("name")
+                    if isinstance(name, str):
+                        producer_name = name.casefold()
                 quant_algo = quant_config.get("quant_algo", quant_algo)
                 quant_layers = quant_config.get("quantized_layers", quant_layers) or {}
+
+        # hf_quant_config.json (ModelOpt schema) carries quant_algo but not
+        # quant_method. If the producer is ModelOpt and .weight_scale tensors
+        # are present (e.g. lm_head FP8 in mixed NVFP4 models), route them
+        # through the existing "modelopt" branch of dequant_model.
+        if quant_method is None and producer_name == "modelopt" \
+                and any(k.endswith(".weight_scale") for k in self.model_tensors):
+            self.hparams.setdefault("quantization_config", {})["quant_method"] = "modelopt"
+            quant_method = "modelopt"
 
         # Some models use per-tensor quant_algo (e.g. "MIXED_PRECISION" with
         # per-layer NVFP4/FP8) instead of a single global "NVFP4" value.
