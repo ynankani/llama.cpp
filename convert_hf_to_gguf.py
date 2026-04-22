@@ -743,17 +743,15 @@ class ModelBase:
         quant_method = (self.hparams.get("quantization_config") or {}).get("quant_method")
         quant_layers = (self.hparams.get("quantization_config") or {}).get("quantized_layers") or {}
         quant_config_file = self.dir_model / "hf_quant_config.json"
-        producer_name = None
 
         if (not quant_algo or not quant_layers) and quant_config_file.is_file():
             with open(quant_config_file, "r", encoding="utf-8") as f:
                 hf_quant_config = json.load(f)
                 quant_config = hf_quant_config.get("quantization") or {}
-                producer = hf_quant_config.get("producer")
-                if isinstance(producer, dict):
-                    name = producer.get("name")
-                    if isinstance(name, str):
-                        producer_name = name.casefold()
+                producer = hf_quant_config.get("producer") or {}
+                producer_name = (producer.get("name") or "").lower()
+                if quant_method is None:
+                    self.hparams.setdefault("quantization_config", {})["quant_method"] = producer_name
                 quant_algo = quant_config.get("quant_algo", quant_algo)
                 quant_layers = quant_config.get("quantized_layers", quant_layers) or {}
 
