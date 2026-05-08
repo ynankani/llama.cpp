@@ -8014,8 +8014,7 @@ class Gemma4Model(Gemma3Model):
 
         if name.endswith("per_dim_scale") or name.endswith("layer_scalar"):
             name = name + ".weight"
-        if ".experts." in name and not name.endswith(".weight") \
-                and not name.endswith(("weight_scale", "weight_scale_2", "input_scale")):
+        if ".experts." in name and not name.endswith((".weight", ".weight_scale", ".weight_scale_2", ".input_scale")):
             name += ".weight"
 
         return super().filter_tensors((name, gen))

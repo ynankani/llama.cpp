@@ -292,8 +292,8 @@ llama_model_gemma4::graph::graph(const llama_model & model, const llm_graph_para
 
             cur_moe = build_moe_ffn(cur_moe,
                     nullptr, // gate_inp
-                    model.layers[il].ffn_gate_up_exps ? nullptr : model.layers[il].ffn_up_exps, // up_exps
-                    model.layers[il].ffn_gate_up_exps ? nullptr : model.layers[il].ffn_gate_exps, // gate_exps
+                    model.layers[il].ffn_up_exps,
+                    model.layers[il].ffn_gate_exps,
                     model.layers[il].ffn_down_exps,
                     nullptr, // exp_probs_b (not used for gemma4)
                     n_expert, n_expert_used,
@@ -302,8 +302,8 @@ llama_model_gemma4::graph::graph(const llama_model & model, const llm_graph_para
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                     il, logits,
                     model.layers[il].ffn_gate_up_exps,
-                    model.layers[il].ffn_gate_up_exps ? nullptr : model.layers[il].ffn_up_exps_s, // up_exps_s
-                    model.layers[il].ffn_gate_up_exps ? nullptr : model.layers[il].ffn_gate_exps_s, // gate_exps_s
+                    model.layers[il].ffn_up_exps_s,
+                    model.layers[il].ffn_gate_exps_s,
                     model.layers[il].ffn_down_exps_s);
             cur_moe = build_norm(cur_moe,
                     model.layers[il].ffn_post_norm_2, nullptr,
