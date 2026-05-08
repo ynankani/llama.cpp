@@ -7992,7 +7992,7 @@ class Gemma4Model(Gemma3Model):
         # Gemma-4 stores a per-layer router.per_expert_scale ([n_expert]) that scales
         # each expert's contribution. It's mathematically equivalent to a per-expert
         # scalar on the down_proj output, which is exactly where ffn_down_exps_s is
-        # applied at inference. Fold it into each expert's NVFP4 weight_scale_2 so the 
+        # applied at inference. Fold it into each expert's NVFP4 weight_scale_2 so the
         # existing NVFP4 path produces the right scales.
         n_experts = self.find_hparam(["num_local_experts", "num_experts"], optional=True) or 0
         for name in [n for n in self.model_tensors if n.endswith(".router.per_expert_scale")]:
@@ -8000,12 +8000,16 @@ class Gemma4Model(Gemma3Model):
             if bid_match is None:
                 continue
             bid = bid_match.group(1)
+            prefix = name[: name.index(f".layers.{bid}.") + len(f".layers.{bid}.")]
+            w2_targets = [f"{prefix}experts.{e}.down_proj.weight_scale_2" for e in range(n_experts)]
+            present = [w2 in self.model_tensors for w2 in w2_targets]
+            if not any(present):
+                continue
+            assert all(present), f"layer {bid}: partial NVFP4 quantization across experts"
             r = self.model_tensors.pop(name)
-            for e in range(n_experts):
-                w2 = f"model.language_model.layers.{bid}.experts.{e}.down_proj.weight_scale_2"
-                if w2 in self.model_tensors:
-                    s = self.model_tensors[w2]
-                    self.model_tensors[w2] = lambda s=s, r=r, i=e: s() * r()[i]
+            for e, w2 in enumerate(w2_targets):
+                s = self.model_tensors[w2]
+                self.model_tensors[w2] = lambda s=s, r=r, i=e: s() * r()[i]
         super()._generate_nvfp4_tensors()
 
     @classmethod
