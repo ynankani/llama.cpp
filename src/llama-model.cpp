@@ -1394,16 +1394,17 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                 layer.ssm_beta_in_s = create_tensor(tn(LLM_TENSOR_SSM_BETA, "input_scale", i), {1}, TENSOR_NOT_REQUIRED);
             }
         }
-    }
 
-    const bool is_output_tied = output && output == tok_embd;
-    if(!is_output_tied && !output_s && output){
-        output_s = create_tensor(tn(LLM_TENSOR_OUTPUT, "scale"), {1}, TENSOR_NOT_REQUIRED);
-    }
-    if(!is_output_tied && !output_in_s && output){
-        output_in_s = create_tensor(tn(LLM_TENSOR_OUTPUT, "input_scale"), {1}, TENSOR_NOT_REQUIRED);
-    }
-    
+        const bool is_output_tied = output && output == tok_embd;
+        if(!is_output_tied){
+            if(!output_s && output){
+                output_s = create_tensor(tn(LLM_TENSOR_OUTPUT, "scale"), {1}, TENSOR_NOT_REQUIRED);
+            }
+            if(!output_in_s && output){
+                output_in_s = create_tensor(tn(LLM_TENSOR_OUTPUT, "input_scale"), {1}, TENSOR_NOT_REQUIRED);
+            }
+        }
+    }   
     ml.done_getting_tensors();
 
     // populate tensors_by_name
