@@ -1395,7 +1395,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             }
         }
         // output scales
-        if (output) {
+        if (output && output->type == GGML_TYPE_NVFP4) {
             // weight scale
             if (!output_s) {
                 output_s = create_tensor(tn(LLM_TENSOR_OUTPUT, "scale"), {1}, TENSOR_NOT_REQUIRED);
