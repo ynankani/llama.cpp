@@ -495,7 +495,7 @@ ggml_tensor * llama_model_qwen4exp::graph::build_norm_gated(
 class llama_model_qwen4exp::llm_graph_input_qsa : public llm_graph_input_i {
 public:
     llm_graph_input_qsa(const llama_memory_hybrid_idx_context * mctx, uint32_t ratio, bool blk_bias, bool causal_attn) :
-        mctx(mctx), ratio(ratio), blk_bias(blk_bias), causal_attn(causal_attn) {}
+        mctx(mctx), kv_view(mctx->get_idx()), ratio(ratio), blk_bias(blk_bias), causal_attn(causal_attn) {}
     virtual ~llm_graph_input_qsa() = default;
 
     void set_input(const llama_ubatch * ubatch) override {
@@ -527,6 +527,8 @@ public:
         res &= bias->ne[0]      == (blk_bias ? n_blocks : n_kv);
         res &= bias->ne[1]      == params.ubatch.n_tokens/n_stream;
 
+        res &= kv_view.can_reuse(idx);
+
         return res;
     }
 
@@ -538,6 +540,7 @@ public:
     ggml_tensor * bias      = nullptr;   // F32 [n_blocks or n_kv, n_tokens/n_stream, n_stream]
 
     const llama_memory_hybrid_idx_context * mctx;
+    const llm_graph_kv_view kv_view;
     const uint32_t ratio;
 
     // the per-cell half of the bias is the attention mask, so only the per-block half is uploaded
@@ -769,7 +772,7 @@ ggml_tensor * llama_model_qwen4exp::graph::build_attn_qsa(
     ggml_tensor * k = mctx_cur->get_k(ctx0, il);
     ggml_tensor * v = mctx_cur->get_v(ctx0, il);
 
-    ggml_tensor * cur = build_attn_mha(q, k, v, nullptr, kq_mask_top_k, nullptr, nullptr, top_k->ne[0], kq_scale, il);
+    ggml_tensor * cur = build_attn_mha(q, k, v, nullptr, kq_mask_top_k, nullptr, nullptr, top_k->ne[0], false, kq_scale, il);
     cb(cur, "kqv_out", il);
 
     // the rotation is its own inverse, so undo it on the value side of the output

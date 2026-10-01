@@ -219,7 +219,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     llama_test(
         test-save-load-state
         LABEL main
-        ARGS --models "${MODEL_DIR}"
+        ARGS --models "${MODEL_DIR}" --test-kv-compact-view
     )
     set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
 
@@ -235,6 +235,7 @@ llama_build_and_test(test-chat-template.cpp)
 # debug tool for chat template differential analysis (not registered as a test, run it manually)
 llama_build(test-chat-analysis.cpp)
 llama_build_and_test(test-log.cpp)
+llama_build_and_test(test-kv-cells.cpp)
 llama_build_and_test(
     test-peg-parser.cpp
     peg-parser/simple-tokenize.cpp

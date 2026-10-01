@@ -319,6 +319,18 @@ public:
     const llama_cparams cparams;
 };
 
+// View offsets and attention hints are captured when the graph is built.
+struct llm_graph_kv_view {
+    llm_graph_kv_view() = default;
+    explicit llm_graph_kv_view(const llama_kv_cache_context * mctx);
+
+    bool can_reuse(const llama_kv_cache_context * mctx) const;
+
+private:
+    uint32_t offset = 0;
+    bool compact = false;
+};
+
 class llm_graph_input_attn_kv : public llm_graph_input_i {
 public:
     llm_graph_input_attn_kv(
@@ -345,6 +357,8 @@ public:
 
     ggml_tensor * self_kq_mask     = nullptr; // F32/F16 [n_kv, n_batch/n_stream, 1, n_stream]
     ggml_tensor * self_kq_mask_cnv = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
+
+    llm_graph_kv_view kv_view;
 
     // note: assumes v_rot^2 == I
     ggml_tensor * self_k_rot = nullptr;
@@ -389,6 +403,8 @@ public:
     ggml_tensor * self_kq_mask     = nullptr; // F32/F16 [n_kv, n_batch/n_stream, 1, n_stream]
     ggml_tensor * self_kq_mask_cnv = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
 
+    llm_graph_kv_view kv_view;
+
     const llama_hparams hparams;
     const llama_cparams cparams;
 
@@ -429,6 +445,9 @@ public:
     ggml_tensor * self_kq_mask_lid_cnv = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
 
     ggml_tensor * self_k_rot_lid = nullptr;
+
+    llm_graph_kv_view kv_view_mla;
+    llm_graph_kv_view kv_view_lid;
 
     const llama_hparams hparams;
     const llama_cparams cparams;
@@ -479,6 +498,8 @@ public:
 
     ggml_tensor * self_k_idxs_idx = nullptr; // I64 [n_batch]
 
+    llm_graph_kv_view kv_view_idx;
+
     const llama_kv_cache_msa_context * mctx_msa;
 };
 
@@ -515,6 +536,9 @@ public:
     ggml_tensor * self_kq_mask_cnv     = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
     ggml_tensor * self_kq_mask_swa     = nullptr; // F32/F16 [n_kv, n_batch/n_stream, 1, n_stream]
     ggml_tensor * self_kq_mask_swa_cnv = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
+
+    llm_graph_kv_view kv_view;
+    llm_graph_kv_view kv_view_swa;
 
     ggml_tensor * self_k_rot = nullptr;
     ggml_tensor * self_v_rot = nullptr;
@@ -557,6 +581,9 @@ public:
     ggml_tensor * self_kq_mask_cnv     = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
     ggml_tensor * self_kq_mask_swa     = nullptr; // F32/F16 [n_kv, n_batch/n_stream, 1, n_stream]
     ggml_tensor * self_kq_mask_swa_cnv = nullptr; //         [n_kv, n_batch/n_stream, 1, n_stream]
+
+    llm_graph_kv_view kv_view;
+    llm_graph_kv_view kv_view_swa;
 
     ggml_tensor * self_k_rot = nullptr;
     ggml_tensor * self_k_rot_swa = nullptr;
@@ -1191,6 +1218,7 @@ struct llm_graph_context {
             ggml_tensor * sinks,   // [n_head_q]
             ggml_tensor * v_mla,   // [n_embd_head_v_mla, n_embd_head_v, n_head_v]
                 int64_t   n_kv_max,
+                   bool   kv_compact,
                   float   kq_scale,
                     int   il) const;
 

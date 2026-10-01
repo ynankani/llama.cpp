@@ -465,6 +465,7 @@ static std::string var_to_str(ggml_scale_mode mode) {
 #define VARS_TO_STR15(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o) VAR_TO_STR(a) + "," + VARS_TO_STR14(b, c, d, e, f, g, h, i, j, k, l, m, n, o)
 #define VARS_TO_STR16(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p) VAR_TO_STR(a) + "," + VARS_TO_STR15(b, c, d, e, f, g, h, i, j, k, l, m, n, o, p)
 #define VARS_TO_STR17(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q) VAR_TO_STR(a) + "," + VARS_TO_STR16(b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q)
+#define VARS_TO_STR18(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r) VAR_TO_STR(a) + "," + VARS_TO_STR17(b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r)
 
 // accept FLT_MAX as infinity
 static bool isinf_or_max(float f) {
@@ -7945,6 +7946,8 @@ struct test_leaky_relu : public test_case {
 
 // GGML_OP_FLASH_ATTN_EXT
 struct test_flash_attn_ext : public test_case {
+    enum mask_pattern { MASK_MIDDLE, MASK_PER_QUERY, MASK_SINGLE_TOKEN, MASK_DENSE };
+
     const int64_t hsk; // K head size
     const int64_t hsv; // V head size
     const int64_t nh; // num heads
@@ -7965,9 +7968,11 @@ struct test_flash_attn_ext : public test_case {
     const bool kv_view; // create K/V as views of a larger buffer (like a KV cache)
     const bool v_is_view_of_k;
     const int64_t n_kv_max;
+    const bool kv_unified;
+    const mask_pattern kv_mask_pattern;
 
     std::string vars() override {
-        return VARS_TO_STR17(hsk, hsv, nh, nr23, kv, nb, mask, sinks, max_bias, logit_softcap, prec, type_K, type_V, permute, kv_view, v_is_view_of_k, n_kv_max);
+        return VARS_TO_STR18(hsk, hsv, nh, nr23, kv, nb, mask, sinks, max_bias, logit_softcap, prec, type_K, type_V, permute, kv_view, v_is_view_of_k, n_kv_max, kv_unified) + "," + VAR_TO_STR(kv_mask_pattern);
     }
 
     double max_nmse_err() override {
@@ -7984,9 +7989,9 @@ struct test_flash_attn_ext : public test_case {
     test_flash_attn_ext(int64_t hsk = 128, int64_t hsv = 128, int64_t nh = 32, std::array<int64_t, 2> nr23 = {1, 1}, int64_t kv = 96, int64_t nb = 8,
                         bool mask = true, bool sinks = false, float max_bias = 0.0f, float logit_softcap = 0.0f, ggml_prec prec = GGML_PREC_F32,
                         ggml_type type_K = GGML_TYPE_F16, ggml_type type_V = GGML_TYPE_F16, std::array<int32_t, 4> permute = {0, 1, 2, 3},
-                        bool kv_view = true, bool v_is_view_of_k = false, int64_t n_kv_max = 0)
+                        bool kv_view = true, bool v_is_view_of_k = false, int64_t n_kv_max = 0, bool kv_unified = false, mask_pattern kv_mask_pattern = MASK_MIDDLE)
         : hsk(hsk), hsv(hsv), nh(nh), nr23(nr23), kv(kv), nb(nb), mask(mask), sinks(sinks), max_bias(max_bias), logit_softcap(logit_softcap), prec(prec),
-          type_K(type_K), type_V(type_V), permute(permute), kv_view(kv_view), v_is_view_of_k(v_is_view_of_k), n_kv_max(n_kv_max) {}
+          type_K(type_K), type_V(type_V), permute(permute), kv_view(kv_view), v_is_view_of_k(v_is_view_of_k), n_kv_max(n_kv_max), kv_unified(kv_unified), kv_mask_pattern(kv_mask_pattern) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         const int64_t hsk_padded = GGML_PAD(hsk, ggml_blck_size(type_K));
@@ -8047,6 +8052,7 @@ struct test_flash_attn_ext : public test_case {
         ggml_tensor * out = ggml_flash_attn_ext(ctx, q, k, v, m, 1.0f/sqrtf(hsk), max_bias, logit_softcap);
         ggml_flash_attn_ext_add_sinks(out, s);
         ggml_flash_attn_ext_set_n_kv_max(out, n_kv_max);
+        ggml_flash_attn_ext_set_kv_unified(out, kv_unified);
         ggml_prec_set_acc(out, prec);
         ggml_set_name(out, "out");
 
@@ -8059,7 +8065,37 @@ struct test_flash_attn_ext : public test_case {
                 // make the sink values more noticeable in order to trigger a test failure when the implementation is wrong
                 init_tensor_uniform(t, -10.0f, 10.0f);
             } else if (strcmp(t->name, "m") == 0) {
-                if (n_kv_max > 0) {
+                if (kv_unified) {
+                    GGML_ASSERT(t->type == GGML_TYPE_F16 && t->ne[0] >= 4);
+                    const int64_t ne0 = t->ne[0];
+                    const int64_t nrows = ggml_nrows(t);
+                    std::vector<float> data_f32(ggml_nelements(t), 0.0f);
+                    std::vector<ggml_fp16_t> data_f16(ggml_nelements(t));
+                    for (int64_t row = 0; row < nrows; ++row) {
+                        for (int64_t i = 0; i < ne0; ++i) {
+                            float value = 0.0f;
+                            switch (kv_mask_pattern) {
+                                case MASK_MIDDLE:
+                                    value = i >= ne0/4 && i < 3*ne0/4 ? -INFINITY : 0.0f;
+                                    break;
+                                case MASK_PER_QUERY: {
+                                    const int64_t start = (row % 4)*(ne0/4) + 3;
+                                    value = i >= start && i < start + ne0/8 - 5 ? -float(1 + i % 5) : -INFINITY;
+                                    break;
+                                }
+                                case MASK_SINGLE_TOKEN:
+                                    value = i == 0 ? 0.0f : -INFINITY;
+                                    break;
+                                case MASK_DENSE:
+                                    value = -float(1 + (row + i) % 5);
+                                    break;
+                            }
+                            data_f32[row*ne0 + i] = value;
+                        }
+                    }
+                    ggml_fp32_to_fp16_row(data_f32.data(), data_f16.data(), data_f16.size());
+                    ggml_backend_tensor_set(t, data_f16.data(), 0, data_f16.size()*sizeof(ggml_fp16_t));
+                } else if (n_kv_max > 0) {
                     init_tensor_kq_mask_sparse(t, n_kv_max);
                 } else {
                     init_tensor_kq_mask(t);
@@ -11116,6 +11152,32 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {16, 2},  1025,   1, true, true,  8, 30, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
     test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {16, 1},  1025,  64, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, {0, 2, 1, 3}));
     test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {16, 1}, 16384,   1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
+    // Unified KV can create fully masked blocks inside the active KV range.
+    test_cases.emplace_back(new test_flash_attn_ext(64, 64, 1, {1, 1}, 512,    3, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true));
+    test_cases.emplace_back(new test_flash_attn_ext(64, 64, 1, {1, 1}, 512, 1024, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true));
+    // GQA with at least 8192 KV rows selects MMA instead of the vector kernel on Ada and newer GPUs.
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {8, 1}, 16384, 1, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true));
+    // Long decode exercises strided traversal across the masked middle range, with attention sinks.
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {8, 1}, 32768, 1, true, true, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true));
+    // MLA-style K/V aliasing shares the one-stage loader's K and V data.
+    test_cases.emplace_back(new test_flash_attn_ext(576, 512, 1, {8, 1}, 512, 1, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, true, 0, true));
+    // Different query/sequence masks have finite negative biases and partially masked edge tiles.
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {8, 2}, 1024, 3, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true, test_flash_attn_ext::MASK_PER_QUERY));
+    // Head size 512 selects MMA. With multiple Stream-K workers, only worker 0 has a live tile and the primary worker is empty.
+    test_cases.emplace_back(new test_flash_attn_ext(512, 512, 1, {8, 1}, 4096, 1, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true, test_flash_attn_ext::MASK_SINGLE_TOKEN));
+    // Quantized K/V conversion and sinks with the same single-live-tile mask.
+    test_cases.emplace_back(new test_flash_attn_ext(512, 512, 1, {8, 1}, 4096, 1, true, true, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, {0, 1, 2, 3}, true, false, 0, true, test_flash_attn_ext::MASK_SINGLE_TOKEN));
+    // A unified hint must not skip finite negative mask values, even when no tile is fully masked.
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {8, 1}, 1024, 3, true, false, 0, 0, GGML_PREC_F32,
+                                                    GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 0, true, test_flash_attn_ext::MASK_DENSE));
 
     // MLA shape: the V cache is a sub-view of the K cache, with quantized KV
     test_cases.emplace_back(new test_flash_attn_ext(576, 512, 1, {8, 1},  113,   1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, {0, 1, 2, 3}, true, true));
